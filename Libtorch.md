@@ -5,7 +5,6 @@ C++版本的PyTorch，也可以用来部署模型。Tips: ***改一个地方后�
 ## 使用 torch.jit.trace 还是 torch.jit.script?
 总体结论：forward中不包含基于分支的数据处理，用trace，否则用script。限制条件有点严格。
 
-
 ## torch.jit.trace 坑
 ### 能save，能推理，未必结果正确
 导出方法：
@@ -179,7 +178,7 @@ Expected integer literal for index but got a variable or non-integer. ModuleList
             unet_skips.insert(0, feat)
         feat = F.leaky_relu_(self.final_conv(feat), negative_slope=0.2)
 ```
-提示信息很完整。我用的版本是torch：2.1.2+cu121，根据[issue](https://github.com/pytorch/pytorch/pull/45716)，貌似已经被解决，让人疑惑。前后对比代码;
+提示信息很完整。我用的版本是torch：2.1.2+cu121，根据[issue](https://github.com/pytorch/pytorch/pull/45716)，貌似已经被解决，让人疑惑。前后对比代码:
 ```python
         eee = int(self.log_size - 2)
 
@@ -192,3 +191,28 @@ Expected integer literal for index but got a variable or non-integer. ModuleList
         #     feat = self.conv_body_down[i](feat)
         #     unet_skips.insert(0, feat)
 ```
+如果是多个ModuleList嵌套调用，可以用zip压缩后，使用上述方法：
+```python
+m_s = zip(self.conv_body_up, self.condition_scale, self.condition_shift)
+for i, (l, ll, lll) in enumerate(m_s):
+    if i < eee:
+        feat = feat + unet_skips[i]
+        feat = l(feat)
+        scale = ll(feat)
+        conditions.append(scale.clone())
+        shift = lll(feat)
+        conditions.append(shift.clone())
+
+# 原始代码
+# for i in range(self.log_size - 2):
+#     # add unet skip
+#     feat = feat + unet_skips[i]
+#     # ResUpLayer
+#     feat = self.conv_body_up[i](feat)
+#     # generate scale and shift for SFT layers
+#     scale = self.condition_scale[i](feat)
+#     conditions.append(scale.clone())
+#     shift = self.condition_shift[i](feat)
+#     conditions.append(shift.clone())
+```
+深入分析相关issues发现，ModuleList和Sequential在script中处理流程并不一致。前的的问题中提到了需要手动调用forward的问题，从这里也算得到验证。综合来说，ModuleList灵活性更高，可以定制forward（炼丹者的套娃，部署人的灾难）。Python里面的迭代属实老生常谈。
