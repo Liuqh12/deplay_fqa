@@ -2,6 +2,11 @@
 
 C++版本的PyTorch，也可以用来部署模型。Tips: ***改一个地方后，一定要记得跑一遍推理***。
 
+## 前置条件
+
+Libtorch加载基于torch.jit.ScriptModule导出的文件，可以是模型、文件等。
+在尝试torch.jit.script导出前，务必认真学习官方文档，来源于[TORCHSCRIPT LANGUAGE REFERENCE](https://pytorch.org/docs/stable/jit_language_reference.html#language-reference)。从本质出发可以预测问题，从错误出发查找原因只会事倍功半。
+
 ## 使用 torch.jit.trace 还是 torch.jit.script?
 总体结论：forward中不包含基于分支的数据处理，用trace，否则用script。限制条件有点严格。
 
@@ -216,3 +221,35 @@ for i, (l, ll, lll) in enumerate(m_s):
 #     conditions.append(shift.clone())
 ```
 深入分析相关issues发现，ModuleList和Sequential在script中处理流程并不一致。前的的问题中提到了需要手动调用forward的问题，从这里也算得到验证。综合来说，ModuleList灵活性更高，可以定制forward（炼丹者的套娃，部署人的灾难）。Python里面的迭代属实老生常谈。
+
+### Expected a value of type 'Tensor (inferred)' for argument 'conditions' but instead found type 'List[Tensor]'.
+报错：
+```text
+forward(__torch__.gfpgan.archs.gfpganv1_clean_arch.StyleGAN2GeneratorCSFT self, Tensor styles, Tensor conditions) -> Tensor:
+Expected a value of type 'Tensor (inferred)' for argument 'conditions' but instead found type 'List[Tensor]'.
+Inferred 'conditions' to be of type 'Tensor' because it was not annotated with an explicit type.
+Empty lists default to List[Tensor]. Add a variable annotation to the assignment to create an empty list of another type (torch.jit.annotate(List[T, []]) where T is the type of elements in the list for Python 2):
+  File "d:\lqh12\GFPGAN-Clean\gfpgan\archs\gfpganv1_clean_arch.py", line 342
+        # print(len(tesp))
+        # decoder
+        image = self.stylegan_decoder(style_code, conditions)
+                ~~~~~~~~~~~~~~~~~~~~~ <--- HERE
+
+        # return image, out_rgbs
+```
+这是不显示声明数据类型导致错误的典型代表。对于list类型的变量，如果必要需要声明list内部元素的具体类型。错误示例如下:
+```python
+conditions = []
+... fill conditions ...
+def forward(self, styles, conditions):
+    ...do forward ...            
+```
+需要修改如下：
+```python
+# 在这修改无效。根据错误提示可得，问题出在形参处。
+conditions:list[torch.Tensor] = []
+... fill conditions ...
+# 正确修改
+def forward(self, styles, conditions:list[torch.Tensor]):
+    ...do forward ...            
+```
